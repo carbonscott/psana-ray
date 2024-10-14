@@ -1,6 +1,5 @@
 import ray
 import time
-from contextlib import contextmanager
 
 class DataReader:
     def __init__(self, address='auto', queue_name="shared_queue", namespace='my'):
