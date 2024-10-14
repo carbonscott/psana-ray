@@ -7,10 +7,13 @@ Launch producer:
 
 Launch ray server on consumer nodes:
     ray start --address='<PRODUCER IP>:<PORT>'
-    The Ray server usually tells you which IP and port to connect to.  For example, ray start --address='172.24.48.144:6379'
+    The ray server usually tells you which IP and port to connect to.  For example, ray start --address='172.24.48.144:6379'
 
 Launch consumer:
     python psana_consumer.py 1
+
+Stop ray server on consumer
+    ray stop
 """
 
 import time
