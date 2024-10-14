@@ -59,25 +59,33 @@ def signal_handler(sig, frame):
 def produce_data(psana_wrapper, queue, rank, size):
     comm = MPI.COMM_WORLD
     for idx, data in enumerate(psana_wrapper.iter_events(mode=ImageRetrievalMode.image)):
-        try:
-            success = ray.get(queue.put.remote([rank, idx, data]))
-            if success:
-                print(f"Rank {rank} produced: idx={idx} | shape={data.shape}")
-            else:
-                print(f"Rank {rank}: Queue is full, waiting...")
-                time.sleep(1)  # TODO: Consider more sophisticated backoff
-        except ray.exceptions.RayActorError:
-            print(f"Rank {rank}: Queue actor is dead. Exiting...")
-            break
-        except Exception as e:
-            print(f"Rank {rank}: Error in produce_data: {e}")
-            time.sleep(1)
+        while True:
+            try:
+                success = ray.get(queue.put.remote([rank, idx, data]))
+                if success:
+                    print(f"Rank {rank} produced: idx={idx} | shape={data.shape}")
+                    break  # Break the while loop and move to the next event
+                else:
+                    print(f"Rank {rank}: Queue is full, waiting...")
+                    time.sleep(1)  # Consider implementing a more sophisticated backoff strategy
+            except ray.exceptions.RayActorError:
+                print(f"Rank {rank}: Queue actor is dead. Exiting...")
+                return  # Exit the function if the queue actor is dead
+            except Exception as e:
+                print(f"Rank {rank}: Error in produce_data: {e}")
+                time.sleep(1)  # Wait before retrying
 
     # Signal completion
     comm.Barrier()
     if rank == 0:
         # Put a sentinel value to signal end of data
-        ray.get(queue.put.remote(None))
+        try:
+            ray.get(queue.put.remote(None))
+            print("Rank 0: Sentinel value sent successfully")
+        except ray.exceptions.RayActorError:
+            print("Rank 0: Queue actor is dead. Unable to send sentinel.")
+        except Exception as e:
+            print(f"Rank 0: Error putting sentinel value: {e}")
 
 def main():
     args = parse_arguments()
@@ -91,6 +99,7 @@ def main():
 
     queue = initialize_ray(args.queue_size, rank)
     if queue is None:
+        MPI.Finalize()
         return
 
     psana_wrapper = PsanaWrapperSmd(
@@ -106,6 +115,7 @@ def main():
     finally:
         if rank == 0:
             ray.shutdown()
+        MPI.Finalize()
 
 if __name__ == "__main__":
     main()
