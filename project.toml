@@ -1,0 +1,17 @@
+[project]
+name = "psana-ray"
+version = "24.10.13"
+description = "Stream psana data from MPI sources to PyTorch for distributed, real-time analysis and inference."
+requires-python = ">=3.7"
+dependencies = [
+    "ray",
+    "mpi4py",
+    "psana-wrapper @ git+https://github.com/carbonscott/psana-wrapper",
+]
+
+[build-system]
+requires = ["setuptools>=45", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["psana_ray"]
