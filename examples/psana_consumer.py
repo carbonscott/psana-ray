@@ -1,9 +1,13 @@
 """
-Launch ray server:
+Launch ray server on producer nodes:
     ray start --head --node-ip-address=127.0.0.1 --port=6379 --num-cpus=10 --block
 
 Launch producer:
     mpirun -n 4 psana-ray-producer --exp mfxl1038923 --run 58 --detector_name epix10k2M --queue_size 400
+
+Launch ray server on consumer nodes:
+    ray start --address='<PRODUCER IP>:<PORT>'
+    The Ray server usually tells you which IP and port to connect to.  For example, ray start --address='172.24.48.144:6379'
 
 Launch consumer:
     python psana_consumer.py 1
