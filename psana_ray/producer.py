@@ -1,4 +1,5 @@
 import argparse
+import random
 import time
 import signal
 import ray
@@ -58,7 +59,13 @@ def signal_handler(sig, frame):
 
 def produce_data(psana_wrapper, queue, rank, size):
     comm = MPI.COMM_WORLD
+
+    # Delay for exponential backoff
+    base_delay_in_sec = 0.1
+    max_delay_in_sec  = 2.0
+
     for idx, data in enumerate(psana_wrapper.iter_events(mode=ImageRetrievalMode.image)):
+        retries = 0
         while True:
             try:
                 success = ray.get(queue.put.remote([rank, idx, data]))
@@ -67,7 +74,12 @@ def produce_data(psana_wrapper, queue, rank, size):
                     break  # Break the while loop and move to the next event
                 else:
                     print(f"Rank {rank}: Queue is full, waiting...")
-                    time.sleep(1)  # Consider implementing a more sophisticated backoff strategy
+
+                    # Use exponential backoff with jitter
+                    delay_in_sec = min(max_delay_in_sec, base_delay_in_sec * (2 ** retries))
+                    jitter_in_sec = random.uniform(0, 0.5)
+                    time.sleep(delay_in_sec + jitter_in_sec)
+                    retries += 1
             except ray.exceptions.RayActorError:
                 print(f"Rank {rank}: Queue actor is dead. Exiting...")
                 return  # Exit the function if the queue actor is dead
