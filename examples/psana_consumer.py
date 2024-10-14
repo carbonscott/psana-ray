@@ -12,14 +12,14 @@ Launch consumer:
 import time
 import sys
 import signal
-from psana_ray.data_reader import data_reader, DataReaderError
+from psana_ray.data_reader import DataReader, DataReaderError
 
 def signal_handler(sig, frame):
     print("Ctrl+C pressed. Shutting down...")
     sys.exit(0)
 
 def consume_data(consumer_id):
-    with data_reader() as reader:
+    with DataReader() as reader:
         while True:
             try:
                 # Try to get data from queue

@@ -33,12 +33,3 @@ class DataReader:
 class DataReaderError(Exception):
     """Custom exception for DataReader errors."""
     pass
-
-@contextmanager
-def data_reader(address='auto', queue_name="shared_queue", namespace='my'):
-    reader = DataReader(address, queue_name, namespace)
-    try:
-        with reader:
-            yield reader
-    finally:
-        pass  # Ray shutdown is handled in __exit__
