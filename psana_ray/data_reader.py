@@ -7,27 +7,44 @@ class DataReader:
         self.queue_name = queue_name
         self.namespace = namespace
         self._queue = None
+        self._ray_initialized = False
 
-    def __enter__(self):
+    def connect(self):
+        if not self._ray_initialized:
+            try:
+                ray.init(address=self.address)
+                self._ray_initialized = True
+            except Exception as e:
+                print(f"Error initializing Ray: {e}")
+                raise
+
         try:
-            ray.init(address=self.address)
             self._queue = ray.get_actor(self.queue_name, namespace=self.namespace)
         except Exception as e:
-            print(f"Error initializing Ray or getting queue actor: {e}")
-            self.__exit__(None, None, None)
+            print(f"Error getting queue actor: {e}")
+            self.close()
             raise
-        return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        ray.shutdown()
+    def close(self):
+        if self._ray_initialized:
+            ray.shutdown()
+            self._ray_initialized = False
+        self._queue = None
 
     def read(self):
         if self._queue is None:
-            raise RuntimeError("DataReader is not initialized. Use with 'with' statement.")
+            raise RuntimeError("DataReader is not connected. Call connect() first.")
         try:
             return ray.get(self._queue.get.remote())
         except ray.exceptions.RayActorError as e:
             raise DataReaderError("Queue actor is dead.") from e
+
+    def __enter__(self):
+        self.connect()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
 
 class DataReaderError(Exception):
     """Custom exception for DataReader errors."""
