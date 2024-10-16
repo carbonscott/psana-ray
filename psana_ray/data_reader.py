@@ -7,13 +7,11 @@ class DataReader:
         self.queue_name = queue_name
         self.namespace = namespace
         self._queue = None
-        self._ray_initialized = False
 
     def connect(self):
-        if not self._ray_initialized:
+        if not ray.is_initialized():
             try:
                 ray.init(address=self.address)
-                self._ray_initialized = True
             except Exception as e:
                 print(f"Error initializing Ray: {e}")
                 raise
@@ -26,9 +24,8 @@ class DataReader:
             raise
 
     def close(self):
-        if self._ray_initialized:
+        if ray.is_initialized():
             ray.shutdown()
-            self._ray_initialized = False
         self._queue = None
 
     def read(self):
