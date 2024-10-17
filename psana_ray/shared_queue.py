@@ -30,9 +30,9 @@ class Queue:
             print(f"Error in size: {e}")
             return 0
 
-def create_queue(name="shared_queue", namespace="default", maxsize=100):
+def create_queue(queue_name="shared_queue", ray_namespace="default", maxsize=100):
     try:
-        return Queue.options(name=name, namespace=namespace).remote(maxsize=maxsize)
+        return Queue.options(name=queue_name, namespace=ray_namespace).remote(maxsize=maxsize)
     except Exception as e:
-        print(f"Error creating queue '{name}' in namespace '{namespace}': {e}")
+        print(f"Error creating queue '{queue_name}' in namespace '{ray_namespace}': {e}")
         return None

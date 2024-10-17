@@ -2,10 +2,10 @@ import ray
 import time
 
 class DataReader:
-    def __init__(self, address='auto', queue_name="shared_queue", namespace='my'):
+    def __init__(self, address='auto', queue_name="shared_queue", ray_namespace='my'):
         self.address = address
         self.queue_name = queue_name
-        self.namespace = namespace
+        self.ray_namespace = ray_namespace
         self._queue = None
 
     def connect(self):
@@ -17,7 +17,7 @@ class DataReader:
                 raise
 
         try:
-            self._queue = ray.get_actor(self.queue_name, namespace=self.namespace)
+            self._queue = ray.get_actor(self.queue_name, namespace=self.ray_namespace)
         except Exception as e:
             print(f"Error getting queue actor: {e}")
             self.close()

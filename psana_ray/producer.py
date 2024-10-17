@@ -3,6 +3,7 @@ import random
 import time
 import signal
 import ray
+import sys
 
 from .shared_queue import create_queue
 from psana_wrapper import PsanaWrapperSmd, ImageRetrievalMode
@@ -14,18 +15,21 @@ def parse_arguments():
     parser.add_argument("--exp", type=str, required=True, help="Experiment name")
     parser.add_argument("--run", type=int, required=True, help="Run number")
     parser.add_argument("--detector_name", type=str, required=True, help="Detector name")
+    parser.add_argument("--ray_address", type=str, default="auto", help="Address of the Ray cluster")
+    parser.add_argument("--ray_namespace", type=str, default="default", help="Ray namespace to use for both queues")
+    parser.add_argument("--queue_name", type=str, default='my', help="Queue name")
     parser.add_argument("--queue_size", type=int, default=100, help="Maximum queue size")
     return parser.parse_args()
 
-def initialize_ray(queue_size, rank, max_retries=10, retry_delay=1):
+def initialize_ray(ray_address, ray_namespace, queue_name, queue_size, rank, max_retries=10, retry_delay=1):
     comm = MPI.COMM_WORLD
 
     try:
-        ray.init(address='auto', namespace='my')
+        ray.init(address=ray_address, namespace=ray_namespace)
         print(f"Rank {rank}: Ray initialized successfully.")
 
         if rank == 0:
-            queue = create_queue(maxsize=queue_size)
+            queue = create_queue(queue_name=queue_name, ray_namespace=ray_namespace, maxsize=queue_size)
             print(f"Rank {rank}: Shared queue created successfully.")
             # Signal that the queue has been created
             comm.Barrier()
@@ -38,7 +42,7 @@ def initialize_ray(queue_size, rank, max_retries=10, retry_delay=1):
         retries = 0
         while retries < max_retries:
             try:
-                queue = ray.get_actor("shared_queue")
+                queue = ray.get_actor(queue_name)
                 print(f"Rank {rank}: Successfully connected to shared queue.")
                 return queue
             except ValueError:  # Actor not found
@@ -66,6 +70,7 @@ def produce_data(psana_wrapper, queue, rank, size):
 
     for idx, data in enumerate(psana_wrapper.iter_events(mode=ImageRetrievalMode.image)):
         retries = 0
+        max_retries = sys.maxsize
         while True:
             try:
                 success = ray.get(queue.put.remote([rank, idx, data]))
@@ -74,6 +79,10 @@ def produce_data(psana_wrapper, queue, rank, size):
                     break  # Break the while loop and move to the next event
                 else:
                     print(f"Rank {rank}: Queue is full, waiting...")
+
+                    if retries >= max_retries:
+                        print(f"Rank {dist_local_rank}, Device {device}: Max retries reached. Unable to push to queue.")
+                        break
 
                     # Use exponential backoff with jitter
                     delay_in_sec = min(max_delay_in_sec, base_delay_in_sec * (2 ** retries))
@@ -109,7 +118,7 @@ def main():
     if rank == 0:
         signal.signal(signal.SIGINT, signal_handler)
 
-    queue = initialize_ray(args.queue_size, rank)
+    queue = initialize_ray(args.ray_address, args.ray_namespace, args.queue_name, args.queue_size, rank)
     if queue is None:
         MPI.Finalize()
         return
