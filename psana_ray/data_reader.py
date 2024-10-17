@@ -11,7 +11,7 @@ class DataReader:
     def connect(self):
         if not ray.is_initialized():
             try:
-                ray.init(address=self.address)
+                ray.init(address=self.address, namespace=self.ray_namespace)
             except Exception as e:
                 print(f"Error initializing Ray: {e}")
                 raise
