@@ -15,6 +15,7 @@ def parse_arguments():
     parser.add_argument("--exp", type=str, required=True, help="Experiment name")
     parser.add_argument("--run", type=int, required=True, help="Run number")
     parser.add_argument("--detector_name", type=str, required=True, help="Detector name")
+    parser.add_argument("--calib", type=bool, default=True, help="Use calib mode")
     parser.add_argument("--ray_address", type=str, default="auto", help="Address of the Ray cluster")
     parser.add_argument("--ray_namespace", type=str, default="default", help="Ray namespace to use for both queues")
     parser.add_argument("--queue_name", type=str, default='my', help="Queue name")
@@ -61,14 +62,14 @@ def signal_handler(sig, frame):
     ray.shutdown()
     exit(0)
 
-def produce_data(psana_wrapper, queue, rank, size):
+def produce_data(psana_wrapper, psana_mode, queue, rank, size):
     comm = MPI.COMM_WORLD
 
     # Delay for exponential backoff
     base_delay_in_sec = 0.1
     max_delay_in_sec  = 2.0
 
-    for idx, data in enumerate(psana_wrapper.iter_events(mode=ImageRetrievalMode.image)):
+    for idx, data in enumerate(psana_wrapper.iter_events(mode=psana_mode)):
         retries = 0
         while True:
             try:
@@ -123,8 +124,13 @@ def main():
         detector_name=args.detector_name,
     )
 
+    psana_mode = dict(
+        calib = ImageRetrievalMode.calib,
+        image = ImageRetrievalMode.image,
+    )['calib' if args.calib else 'image']
+
     try:
-        produce_data(psana_wrapper, queue, rank, size)
+        produce_data(psana_wrapper, psana_mode, queue, rank, size)
     except Exception as e:
         print(f"Rank {rank}: Unhandled exception in main: {e}")
     finally:
