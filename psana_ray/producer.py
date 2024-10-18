@@ -70,7 +70,6 @@ def produce_data(psana_wrapper, queue, rank, size):
 
     for idx, data in enumerate(psana_wrapper.iter_events(mode=ImageRetrievalMode.image)):
         retries = 0
-        max_retries = sys.maxsize
         while True:
             try:
                 success = ray.get(queue.put.remote([rank, idx, data]))
@@ -79,16 +78,11 @@ def produce_data(psana_wrapper, queue, rank, size):
                     break  # Break the while loop and move to the next event
                 else:
                     print(f"Rank {rank}: Queue is full, waiting...")
-
-                    if retries >= max_retries:
-                        print(f"Rank {dist_local_rank}, Device {device}: Max retries reached. Unable to push to queue.")
-                        break
-
                     # Use exponential backoff with jitter
                     delay_in_sec = min(max_delay_in_sec, base_delay_in_sec * (2 ** retries))
                     jitter_in_sec = random.uniform(0, 0.5)
                     time.sleep(delay_in_sec + jitter_in_sec)
-                    retries += 1
+                    if delay_in_sec < max_delay_in_sec: retries += 1
             except ray.exceptions.RayActorError:
                 print(f"Rank {rank}: Queue actor is dead. Exiting...")
                 return  # Exit the function if the queue actor is dead
