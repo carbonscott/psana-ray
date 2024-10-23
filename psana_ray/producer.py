@@ -4,6 +4,7 @@ import time
 import signal
 import ray
 import sys
+import numpy as np
 
 from .shared_queue import create_queue
 from psana_wrapper import PsanaWrapperSmd, ImageRetrievalMode
@@ -16,6 +17,7 @@ def parse_arguments():
     parser.add_argument("--run", type=int, required=True, help="Run number")
     parser.add_argument("--detector_name", type=str, required=True, help="Detector name")
     parser.add_argument("--calib", type=bool, default=True, help="Use calib mode")
+    parser.add_argument("--uses_bad_pixel_mask", type=bool, default=True, help="Use bad pixel mask")
     parser.add_argument("--ray_address", type=str, default="auto", help="Address of the Ray cluster")
     parser.add_argument("--ray_namespace", type=str, default="default", help="Ray namespace to use for both queues")
     parser.add_argument("--queue_name", type=str, default='my', help="Queue name")
@@ -62,14 +64,18 @@ def signal_handler(sig, frame):
     ray.shutdown()
     exit(0)
 
-def produce_data(psana_wrapper, psana_mode, queue, rank, size):
+def produce_data(psana_wrapper, psana_mode, uses_bad_pixel_mask, queue, rank, size):
     comm = MPI.COMM_WORLD
+
+    bad_pixel_mask = psana_wrapper.create_bad_pixel_mask() if uses_bad_pixel_mask else None
 
     # Delay for exponential backoff
     base_delay_in_sec = 0.1
     max_delay_in_sec  = 2.0
 
     for idx, data in enumerate(psana_wrapper.iter_events(mode=psana_mode)):
+        if bad_pixel_mask is not None:
+            data = np.where(bad_pixel_mask, data, 0)
         retries = 0
         while True:
             try:
@@ -130,7 +136,7 @@ def main():
     )['calib' if args.calib else 'image']
 
     try:
-        produce_data(psana_wrapper, psana_mode, queue, rank, size)
+        produce_data(psana_wrapper, psana_mode, args.uses_bad_pixel_mask, queue, rank, size)
     except Exception as e:
         print(f"Rank {rank}: Unhandled exception in main: {e}")
     finally:
