@@ -5,6 +5,7 @@ import signal
 import ray
 import sys
 import numpy as np
+import logging
 
 from .shared_queue import create_queue
 from psana_wrapper import PsanaWrapperSmd, ImageRetrievalMode
@@ -23,6 +24,8 @@ def parse_arguments():
     parser.add_argument("--ray_namespace", type=str, default="default", help="Ray namespace to use for both queues")
     parser.add_argument("--queue_name", type=str, default='my', help="Queue name")
     parser.add_argument("--queue_size", type=int, default=100, help="Maximum queue size")
+    parser.add_argument("--log_level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+                        help="Logging level")
     return parser.parse_args()
 
 def initialize_ray(ray_address, ray_namespace, queue_name, queue_size, rank, max_retries=10, retry_delay=1):
@@ -30,38 +33,41 @@ def initialize_ray(ray_address, ray_namespace, queue_name, queue_size, rank, max
 
     try:
         ray.init(address=ray_address, namespace=ray_namespace)
-        print(f"Rank {rank}: Ray initialized successfully.")
+        logging.info(f"Rank {rank}: Ray initialized successfully.")
 
         if rank == 0:
-            queue = create_queue(queue_name=queue_name, ray_namespace=ray_namespace, maxsize=queue_size)
-            print(f"Rank {rank}: Shared queue created successfully.")
-            # Signal that the queue has been created
-            comm.Barrier()
+            try:
+                queue = ray.get_actor(queue_name, namespace=ray_namespace)
+                logging.info(f"Connected to existing input queue: {queue_name} in namespace: {ray_namespace}")
+            except ValueError:  # Ray raises ValueError when actor is not found
+                queue = create_queue(queue_name=queue_name, ray_namespace=ray_namespace, maxsize=queue_size)
+                logging.info(f"Rank {rank}: Shared input queue created successfully.")
         else:
-            print(f"Rank {rank}: Waiting for shared queue to be created...")
-            # Wait for rank 0 to create the queue
-            comm.Barrier()
+            logging.info(f"Rank {rank}: Waiting for shared input queue to be created...")
+
+        # Wait for rank 0 to create the queue
+        comm.Barrier()
 
         # All ranks try to get the queue
         retries = 0
         while retries < max_retries:
             try:
-                queue = ray.get_actor(queue_name)
-                print(f"Rank {rank}: Successfully connected to shared queue.")
+                queue = ray.get_actor(queue_name, namespace=ray_namespace)
+                logging.info(f"Rank {rank}: Successfully connected to shared queue.")
                 return queue
             except ValueError:  # Actor not found
                 retries += 1
-                print(f"Rank {rank}: Attempt {retries}/{max_retries} to connect to shared queue failed. Retrying...")
+                logging.info(f"Rank {rank}: Attempt {retries}/{max_retries} to connect to shared queue failed. Retrying...")
                 time.sleep(retry_delay)
 
         raise TimeoutError(f"Rank {rank}: Timeout waiting for shared_queue actor")
 
     except Exception as e:
-        print(f"Rank {rank}: Error in initialize_ray: {e}")
+        logging.error(f"Rank {rank}: Error in initialize_ray: {e}")
         return None
 
 def signal_handler(sig, frame):
-    print("Ctrl+C pressed. Shutting down...")
+    logging.error("Ctrl+C pressed. Shutting down...")
     ray.shutdown()
     exit(0)
 
@@ -85,20 +91,20 @@ def produce_data(psana_wrapper, psana_mode, queue, rank, size, uses_bad_pixel_ma
             try:
                 success = ray.get(queue.put.remote([rank, idx, data, photon_energy]))
                 if success:
-                    print(f"Rank {rank} produced: idx={idx} | shape={data.shape} | photon_energy={photon_energy}")
+                    logging.info(f"Rank {rank} produced: idx={idx} | shape={data.shape} | photon_energy={photon_energy}")
                     break  # Break the while loop and move to the next event
                 else:
-                    print(f"Rank {rank}: Queue is full, waiting...")
+                    logging.info(f"Rank {rank}: Queue is full, waiting...")
                     # Use exponential backoff with jitter
                     delay_in_sec = min(max_delay_in_sec, base_delay_in_sec * (2 ** retries))
                     jitter_in_sec = random.uniform(0, 0.5)
                     time.sleep(delay_in_sec + jitter_in_sec)
                     if delay_in_sec < max_delay_in_sec: retries += 1
             except ray.exceptions.RayActorError:
-                print(f"Rank {rank}: Queue actor is dead. Exiting...")
+                logging.error(f"Rank {rank}: Queue actor is dead. Exiting...")
                 return  # Exit the function if the queue actor is dead
             except Exception as e:
-                print(f"Rank {rank}: Error in produce_data: {e}")
+                logging.error(f"Rank {rank}: Error in produce_data: {e}")
                 time.sleep(1)  # Wait before retrying
 
     # Signal completion
@@ -107,14 +113,17 @@ def produce_data(psana_wrapper, psana_mode, queue, rank, size, uses_bad_pixel_ma
         # Put a sentinel value to signal end of data
         try:
             ray.get(queue.put.remote(None))
-            print("Rank 0: Sentinel value sent successfully")
+            logging.info("Rank 0: Sentinel value sent successfully")
         except ray.exceptions.RayActorError:
-            print("Rank 0: Queue actor is dead. Unable to send sentinel.")
+            logging.info("Rank 0: Queue actor is dead. Unable to send sentinel.")
         except Exception as e:
-            print(f"Rank 0: Error putting sentinel value: {e}")
+            logging.info(f"Rank 0: Error putting sentinel value: {e}")
 
 def main():
     args = parse_arguments()
+
+    logging.basicConfig(level=getattr(logging, args.log_level),
+                        format='%(asctime)s - %(levelname)s - %(message)s')
 
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
@@ -142,7 +151,7 @@ def main():
     try:
         produce_data(psana_wrapper, psana_mode, queue, rank, size, args.uses_bad_pixel_mask, args.manual_mask_path)
     except Exception as e:
-        print(f"Rank {rank}: Unhandled exception in main: {e}")
+        logging.error(f"Rank {rank}: Unhandled exception in main: {e}")
     finally:
         if rank == 0:
             ray.shutdown()
