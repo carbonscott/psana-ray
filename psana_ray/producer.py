@@ -24,6 +24,8 @@ def parse_arguments():
     parser.add_argument("--ray_namespace", type=str, default="default", help="Ray namespace to use for both queues")
     parser.add_argument("--queue_name", type=str, default='my', help="Queue name")
     parser.add_argument("--queue_size", type=int, default=100, help="Maximum queue size")
+    parser.add_argument("--num_consumers", type=int, default=1, help="Number of consumer processes expected.")
+    parser.add_argument("--max_steps", type=int, default=None, help="Maximum number of steps before terminating")
     parser.add_argument("--log_level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
                         help="Logging level")
     return parser.parse_args()
@@ -71,7 +73,7 @@ def signal_handler(sig, frame):
     ray.shutdown()
     exit(0)
 
-def produce_data(psana_wrapper, psana_mode, queue, rank, size, uses_bad_pixel_mask=False, manual_mask_path=None):
+def produce_data(psana_wrapper, psana_mode, queue, rank, size, num_consumers=1, uses_bad_pixel_mask=False, manual_mask_path=None, max_steps=None):
     comm = MPI.COMM_WORLD
 
     bad_pixel_mask = psana_wrapper.create_bad_pixel_mask() if uses_bad_pixel_mask else None
@@ -82,6 +84,9 @@ def produce_data(psana_wrapper, psana_mode, queue, rank, size, uses_bad_pixel_ma
     max_delay_in_sec  = 2.0
 
     for idx, (data, photon_energy) in enumerate(psana_wrapper.iter_events(mode=psana_mode)):
+        if max_steps is not None and idx >= max_steps:
+            logging.info(f"Rank {rank}: Reached max_steps {max_steps}, terminating")
+            break
         if bad_pixel_mask is not None:
             data = np.where(bad_pixel_mask, data, 0)
         if manual_pixel_mask is not None:
@@ -110,14 +115,15 @@ def produce_data(psana_wrapper, psana_mode, queue, rank, size, uses_bad_pixel_ma
     # Signal completion
     comm.Barrier()
     if rank == 0:
-        # Put a sentinel value to signal end of data
+        # Put sentinel values to signal end of data (one per consumer)
         try:
-            ray.get(queue.put.remote(None))
-            logging.info("Rank 0: Sentinel value sent successfully")
+            for _ in range(num_consumers):
+                ray.get(queue.put.remote(None))
+            logging.info(f"Rank 0: {num_consumers} sentinel values sent successfully")
         except ray.exceptions.RayActorError:
-            logging.info("Rank 0: Queue actor is dead. Unable to send sentinel.")
+            logging.info("Rank 0: Queue actor is dead. Unable to send sentinels.")
         except Exception as e:
-            logging.info(f"Rank 0: Error putting sentinel value: {e}")
+            logging.info(f"Rank 0: Error putting sentinel values: {e}")
 
 def main():
     args = parse_arguments()
@@ -149,7 +155,7 @@ def main():
     )['calib' if args.calib else 'image']
 
     try:
-        produce_data(psana_wrapper, psana_mode, queue, rank, size, args.uses_bad_pixel_mask, args.manual_mask_path)
+        produce_data(psana_wrapper, psana_mode, queue, rank, size, args.num_consumers, args.uses_bad_pixel_mask, args.manual_mask_path, args.max_steps)
     except Exception as e:
         logging.error(f"Rank {rank}: Unhandled exception in main: {e}")
     finally:
