@@ -12,13 +12,15 @@ from psana_wrapper import PsanaWrapperSmd, ImageRetrievalMode
 
 from mpi4py import MPI
 
+import traceback
+
 def parse_arguments():
     parser = argparse.ArgumentParser(description="PsanaWrapper Data Producer")
     parser.add_argument("--exp", type=str, required=True, help="Experiment name")
     parser.add_argument("--run", type=int, required=True, help="Run number")
     parser.add_argument("--detector_name", type=str, required=True, help="Detector name")
-    parser.add_argument("--calib", type=bool, default=True, help="Use calib mode")
-    parser.add_argument("--uses_bad_pixel_mask", type=bool, default=True, help="Use bad pixel mask")
+    parser.add_argument("--calib", action="store_true", help="Use calib mode")
+    parser.add_argument("--uses_bad_pixel_mask", action="store_true", help="Use bad pixel mask")
     parser.add_argument("--manual_mask_path", type=str, default=None, help="Path to a manual mask in npy")
     parser.add_argument("--ray_address", type=str, default="auto", help="Address of the Ray cluster")
     parser.add_argument("--ray_namespace", type=str, default="default", help="Ray namespace to use for both queues")
@@ -91,6 +93,8 @@ def produce_data(psana_wrapper, psana_mode, queue, rank, size, num_consumers=1, 
             data = np.where(bad_pixel_mask, data, 0)
         if manual_pixel_mask is not None:
             data = np.where(manual_pixel_mask, data, 0)
+        if data.ndim == 2:
+            data = data[None,]
         retries = 0
         while True:
             try:
@@ -158,6 +162,9 @@ def main():
         produce_data(psana_wrapper, psana_mode, queue, rank, size, args.num_consumers, args.uses_bad_pixel_mask, args.manual_mask_path, args.max_steps)
     except Exception as e:
         logging.error(f"Rank {rank}: Unhandled exception in main: {e}")
+        logging.error("Traceback:")
+        logging.error(traceback.format_exc())
+        raise
     finally:
         if rank == 0:
             ray.shutdown()
